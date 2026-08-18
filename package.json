@@ -6,8 +6,9 @@
   "type": "commonjs",
   "scripts": {
     "build": "tsc --noEmit && tsup",
+    "build:prod": "tsup",
     "start": "tsx ./src/main.ts",
-    "start:prod": "node dist/main",
+    "start:prod": "bash -c \"mkdir -p logs && nohup node dist/main > logs/app.log 2>&1 & disown\"",
     "dev:server": "tsx watch ./src/main.ts",
     "test": "tsx watch ./test/all.test.ts",
     "lint": "eslint --fix --ext .ts src",
