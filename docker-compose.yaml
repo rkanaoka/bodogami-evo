@@ -13,7 +13,7 @@ services:
       - evolution_instances:/evolution/instances
     networks:
       - evolution-net
-      - dokploy-network
+      - traefik-net
     env_file:
       - .env
     expose:
@@ -46,7 +46,7 @@ services:
       evolution-net:
         aliases:
           - evolution-redis
-      dokploy-network:
+      traefik-net:
         aliases:
           - evolution-redis
     expose:
@@ -60,5 +60,6 @@ networks:
   evolution-net:
     name: evolution-net
     driver: bridge
-  dokploy-network:
+  traefik-net:
+    name: infra_default
     external: true
