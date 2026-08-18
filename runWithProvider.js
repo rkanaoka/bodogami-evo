@@ -1,6 +1,7 @@
 const dotenv = require('dotenv');
 const { execSync } = require('child_process');
-const { existsSync } = require('fs');
+const fs = require('fs');
+const path = require('path');
 
 dotenv.config();
 
@@ -11,15 +12,63 @@ if (!DATABASE_PROVIDER) {
   console.warn(`DATABASE_PROVIDER is not set in the .env file, using default: ${databaseProviderDefault}`);
 }
 
-// Função para determinar qual pasta de migrations usar
-// Função para determinar qual pasta de migrations usar
 function getMigrationsFolder(provider) {
   switch (provider) {
     case 'psql_bouncer':
-      return 'postgresql-migrations'; // psql_bouncer usa as migrations do postgresql
+      return 'postgresql-migrations';
     default:
       return `${provider}-migrations`;
   }
+}
+
+function normalizePath(value) {
+  return value.replace(/^['"]|['"]$/g, '').replace(/\\/g, '/');
+}
+
+function executeStep(step) {
+  const trimmedStep = step.trim();
+
+  if (!trimmedStep) {
+    return;
+  }
+
+  const rmMatch = trimmedStep.match(/^rm\s+-rf\s+(.+)$/i);
+  if (rmMatch) {
+    const target = normalizePath(rmMatch[1]);
+    const resolvedTarget = path.resolve(target);
+    if (fs.existsSync(resolvedTarget)) {
+      fs.rmSync(resolvedTarget, { recursive: true, force: true });
+    }
+    return;
+  }
+
+  const cpMatch = trimmedStep.match(/^cp\s+-r\s+(.+?)\s+(.+)$/i);
+  if (cpMatch) {
+    const source = normalizePath(cpMatch[1]);
+    const destination = normalizePath(cpMatch[2]);
+    const resolvedSource = path.resolve(source);
+    const resolvedDestination = path.resolve(destination);
+
+    if (!fs.existsSync(resolvedSource)) {
+      throw new Error(`Source path not found for copy command: ${source}`);
+    }
+
+    fs.rmSync(resolvedDestination, { recursive: true, force: true });
+    fs.cpSync(resolvedSource, resolvedDestination, { recursive: true, force: true });
+    return;
+  }
+
+  const rmdirMatch = trimmedStep.match(/^rmdir\s+(.*)$/i);
+  if (rmdirMatch && rmdirMatch[1]) {
+    const target = normalizePath(rmdirMatch[1]);
+    const resolvedTarget = path.resolve(target);
+    if (fs.existsSync(resolvedTarget)) {
+      fs.rmSync(resolvedTarget, { recursive: true, force: true });
+    }
+    return;
+  }
+
+  execSync(trimmedStep, { stdio: 'inherit' });
 }
 
 const migrationsFolder = getMigrationsFolder(databaseProviderDefault);
@@ -29,23 +78,15 @@ let command = process.argv
   .join(' ')
   .replace(/DATABASE_PROVIDER/g, databaseProviderDefault);
 
-// Substituir referências à pasta de migrations pela pasta correta
 const migrationsPattern = new RegExp(`${databaseProviderDefault}-migrations`, 'g');
 command = command.replace(migrationsPattern, migrationsFolder);
 
-if (command.includes('rmdir') && existsSync('prisma\\migrations')) {
-  try {
-    execSync('rmdir /S /Q prisma\\migrations', { stdio: 'inherit' });
-  } catch (error) {
-    console.error(`Error removing directory: prisma\\migrations`);
-    process.exit(1);
-  }
-} else if (command.includes('rmdir')) {
-  console.warn(`Directory 'prisma\\migrations' does not exist, skipping removal.`);
-}
+const steps = command.split('&&').map((step) => step.trim()).filter(Boolean);
 
 try {
-  execSync(command, { stdio: 'inherit' });
+  for (const step of steps) {
+    executeStep(step);
+  }
 } catch (error) {
   console.error(`Error executing command: ${command}`);
   process.exit(1);

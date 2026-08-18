@@ -74,6 +74,7 @@ import {
   ProviderSession,
   QrCode,
   S3,
+  WaReconnect,
 } from '@config/env.config';
 import { BadRequestException, InternalServerErrorException, NotFoundException } from '@exceptions';
 import ffmpegPath from '@ffmpeg-installer/ffmpeg';
@@ -251,6 +252,7 @@ export class BaileysStartupService extends ChannelStartupService {
   private endSession = false;
   private logBaileys = this.configService.get<Log>('LOG').BAILEYS;
   private eventProcessingQueue: Promise<void> = Promise.resolve();
+  private reconnectAttempts = 0;
 
   // Cache TTL constants (in seconds)
   private readonly MESSAGE_CACHE_TTL_SECONDS = 5 * 60; // 5 minutes - avoid duplicate message processing
@@ -428,6 +430,50 @@ export class BaileysStartupService extends ChannelStartupService {
       const codesToNotReconnect = [DisconnectReason.loggedOut, DisconnectReason.forbidden, 402, 406];
       const shouldReconnect = !codesToNotReconnect.includes(statusCode);
       if (shouldReconnect) {
+        const waReconnect = this.configService.get<WaReconnect>('WA_RECONNECT');
+        this.reconnectAttempts++;
+
+        if (this.reconnectAttempts > waReconnect.MAX_ATTEMPTS) {
+          this.logger.error(
+            `Instance "${this.instance.name}": ${this.reconnectAttempts - 1} consecutive reconnect attempts failed (last status: ${statusCode}). Automatic reconnection stopped - manual reconnection required via the connect endpoint.`,
+          );
+
+          this.reconnectAttempts = 0;
+
+          await this.prismaRepository.instance.update({
+            where: { id: this.instanceId },
+            data: {
+              connectionStatus: 'close',
+              disconnectionAt: new Date(),
+              disconnectionReasonCode: statusCode,
+              disconnectionObject: JSON.stringify(lastDisconnect),
+            },
+          });
+
+          this.client?.ws?.close();
+          this.client?.end(new Error('Reconnect attempts exhausted'));
+
+          this.sendDataWebhook(Events.CONNECTION_UPDATE, {
+            instance: this.instance.name,
+            state: 'close',
+            statusReason: statusCode,
+            wuid: this.instance.wuid,
+            reconnectExhausted: true,
+          });
+
+          return;
+        }
+
+        const baseDelaySeconds = waReconnect.INITIAL_DELAY_SECONDS * Math.pow(2, this.reconnectAttempts - 1);
+        const cappedDelaySeconds = Math.min(baseDelaySeconds, waReconnect.MAX_DELAY_SECONDS);
+        const jitterSeconds = cappedDelaySeconds * waReconnect.JITTER_FACTOR * (Math.random() * 2 - 1);
+        const finalDelaySeconds = Math.max(waReconnect.INITIAL_DELAY_SECONDS, cappedDelaySeconds + jitterSeconds);
+
+        this.logger.warn(
+          `Instance "${this.instance.name}": connection closed (status ${statusCode}). Reconnect attempt ${this.reconnectAttempts}/${waReconnect.MAX_ATTEMPTS} in ${finalDelaySeconds.toFixed(1)}s.`,
+        );
+
+        await delay(finalDelaySeconds * 1000);
         await this.connectToWhatsapp(this.phoneNumber);
       } else {
         this.sendDataWebhook(Events.STATUS_INSTANCE, {
@@ -465,6 +511,7 @@ export class BaileysStartupService extends ChannelStartupService {
     }
 
     if (connection === 'open') {
+      this.reconnectAttempts = 0;
       this.instance.wuid = this.client.user.id.replace(/:\d+/, '');
       try {
         const profilePic = await this.profilePicture(this.instance.wuid);

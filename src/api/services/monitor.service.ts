@@ -3,7 +3,15 @@ import { ProviderFiles } from '@api/provider/sessions';
 import { PrismaRepository } from '@api/repository/repository.service';
 import { channelController } from '@api/server.module';
 import { Events, Integration } from '@api/types/wa.types';
-import { CacheConf, Chatwoot, ConfigService, Database, DelInstance, ProviderSession } from '@config/env.config';
+import {
+  CacheConf,
+  Chatwoot,
+  ConfigService,
+  Database,
+  DelInstance,
+  ProviderSession,
+  WaReconnect,
+} from '@config/env.config';
 import { Logger } from '@config/logger.config';
 import { INSTANCE_DIR, STORE_DIR } from '@config/path.config';
 import { NotFoundException } from '@exceptions';
@@ -307,12 +315,19 @@ export class WAMonitoringService {
     this.waInstances[instanceData.instanceName] = instance;
   }
 
+  private async startupStaggerDelay(index: number): Promise<void> {
+    const staggerMs = this.configService.get<WaReconnect>('WA_RECONNECT').STARTUP_STAGGER_MS;
+    if (staggerMs > 0 && index > 0) {
+      await new Promise((resolve) => setTimeout(resolve, index * staggerMs));
+    }
+  }
+
   private async loadInstancesFromRedis() {
     const keys = await this.cache.keys();
 
     if (keys?.length > 0) {
       await Promise.all(
-        keys.map(async (k) => {
+        keys.map(async (k, index) => {
           const instanceData = await this.prismaRepository.instance.findUnique({
             where: { id: k.split(':')[1] },
           });
@@ -331,6 +346,7 @@ export class WAMonitoringService {
             connectionStatus: instanceData.connectionStatus as any, // Pass connection status
           };
 
+          await this.startupStaggerDelay(index);
           this.setInstance(instance);
         }),
       );
@@ -349,7 +365,8 @@ export class WAMonitoringService {
     }
 
     await Promise.all(
-      instances.map(async (instance) => {
+      instances.map(async (instance, index) => {
+        await this.startupStaggerDelay(index);
         this.setInstance({
           instanceId: instance.id,
           instanceName: instance.name,
@@ -372,11 +389,12 @@ export class WAMonitoringService {
     }
 
     await Promise.all(
-      instances?.data?.map(async (instanceId: string) => {
+      instances?.data?.map(async (instanceId: string, index: number) => {
         const instance = await this.prismaRepository.instance.findUnique({
           where: { id: instanceId },
         });
 
+        await this.startupStaggerDelay(index);
         this.setInstance({
           instanceId: instance.id,
           instanceName: instance.name,

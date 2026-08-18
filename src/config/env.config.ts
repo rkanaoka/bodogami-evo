@@ -314,6 +314,13 @@ export type Webhook = {
 export type Pusher = { ENABLED: boolean; GLOBAL?: GlobalPusher; EVENTS: EventsPusher };
 export type ConfigSessionPhone = { CLIENT: string; NAME: string };
 export type QrCode = { LIMIT: number; COLOR: string };
+export type WaReconnect = {
+  INITIAL_DELAY_SECONDS: number;
+  MAX_DELAY_SECONDS: number;
+  MAX_ATTEMPTS: number;
+  JITTER_FACTOR: number;
+  STARTUP_STAGGER_MS: number;
+};
 export type Typebot = { ENABLED: boolean; API_VERSION: string; SEND_MEDIA_BASE64: boolean };
 export type Chatwoot = {
   ENABLED: boolean;
@@ -411,6 +418,7 @@ export interface Env {
   PUSHER: Pusher;
   CONFIG_SESSION_PHONE: ConfigSessionPhone;
   QRCODE: QrCode;
+  WA_RECONNECT: WaReconnect;
   TYPEBOT: Typebot;
   CHATWOOT: Chatwoot;
   OPENAI: Openai;
@@ -803,6 +811,13 @@ export class ConfigService {
       QRCODE: {
         LIMIT: Number.parseInt(process.env.QRCODE_LIMIT) || 30,
         COLOR: process.env.QRCODE_COLOR || '#198754',
+      },
+      WA_RECONNECT: {
+        INITIAL_DELAY_SECONDS: Number.parseInt(process.env?.WA_RECONNECT_INITIAL_DELAY_SECONDS) || 30,
+        MAX_DELAY_SECONDS: Number.parseInt(process.env?.WA_RECONNECT_MAX_DELAY_SECONDS) || 600,
+        MAX_ATTEMPTS: Number.parseInt(process.env?.WA_RECONNECT_MAX_ATTEMPTS) || 6,
+        JITTER_FACTOR: Number.parseFloat(process.env?.WA_RECONNECT_JITTER_FACTOR) || 0.2,
+        STARTUP_STAGGER_MS: Number.parseInt(process.env?.WA_RECONNECT_STARTUP_STAGGER_MS) || 2000,
       },
       TYPEBOT: {
         ENABLED: process.env?.TYPEBOT_ENABLED === 'true',
